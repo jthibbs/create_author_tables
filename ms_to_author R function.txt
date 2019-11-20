@@ -1,0 +1,124 @@
+
+################################################################################################################
+    ########################### How to import the data and related notes ###########################
+################################################################################################################
+
+##############
+####### You need to first import the data using the following: This is my file's directory, find your file's location and insert it in the following:
+data <- read.csv(file = "C:/Users/jthibodeaux/Desktop/THIS_IS_WHERE_YOUR_FILE_NAME_GOES.csv", header=TRUE, sep=",")
+##############
+
+
+##############
+####### For the function to work:
+ # A: The author's email column needs to be called 'email'
+ # B: The Manuscript Number's column needs to be called ms_number
+ # C: The Date Submit column needs to be called date_submit.
+### To change your column's name into the proper name use the following format (the below is for email, just replace 'YOUR_CURRENT_COLUMN_NAME_FOR_EMAIL':
+names(data)[names(data) == 'YOUR_CURRENT_COLUMN_NAME_FOR_EMAIL'] <- "email"
+
+
+##############
+####### Make sure the dates are all in a proper format:
+##############
+### Sometimes the date is imported as a character type instead of date type ... If so use:
+data$date_submit <- as.Date(as.character(data$date_submit), format="%d/%m/%Y")
+### I one case I had to change dates: early dates were m/d/y, late were m/d/Y (e.g. /2014 vs /17) ... This is what I used:
+libaray(lubridate)
+data$date_submit <- (parse_date_time(data$date_submit, orders = c('mdy', 'mdY')))
+data$date_submit <- as.Date(data$date_submit)
+
+
+
+
+
+################################################################################################################
+    #################################### Notes on this function ####################################
+################################################################################################################
+
+#################### MAIN: HOW TO RUN:
+  #1: Copy and paste the below code first
+  #2: You will then need to save the output of the function in a new dataframe object ... use the following format:
+NAME_OF_YOUR_NEW_DATA <- ms_to_author(NAME_OF_YOUR_CURRENT_DATA_YOU_WANT_TO_TRANSFORM)
+
+
+####### dply needs to be installed, to install run the following:
+install.packages("dplyr")
+
+####### This function can take a while to convert very large files.
+  # 50k rows takes about a minute to convert ... 1.5 million rows takes about an hour and a half. 
+
+####### The size of the file can dramatically increase in size: The number of columns increases to the most manuscripts associated with an email.
+ # e.g. If a person published 100 manuscripts that'd lead to (100 * 'the number of columns from the initial dataframe') columns.
+
+
+
+
+
+
+################################################################################################################
+################################################################################################################
+    #################### Turning Manuscript level data into Author level data R code ####################
+################################################################################################################
+################################################################################################################
+
+ms_to_author <- function(data)
+ {
+ ####### Make the author by ms primary key:
+ data$emailbyms <- paste0(data$email, data$ms_number)
+
+ ####### Get rid of rows with the same author/manuscript combination .... NOTE: Only use this if you think there may be duplicates in the data.
+ data <- data[duplicated(data$emailbyms) == FALSE , ]
+
+ ####### When reuploading, need to rechange into date format and exclude the 1st row (**** no need to change the date_dispo and date_finaldec for this analysis):
+ data<-data[ , 2:length(data)]
+ data$date_submit <- as.Date(data$date_submit)
+
+ ################ Create a dataset with only the author's earliest MS:
+ ####### Create a dataset with only an author's earliest date_submit:
+ earliest <- aggregate(data$date_submit, by=list(data$email), min)
+
+ ####### Create dataset of author's 'earliest_ms', connecting through a concatination of email and date_submit:
+ data$early_connect <- paste0(data$email, data$date_submit)
+ earliest$early_connect <- paste0(earliest$Group.1, earliest$x)
+ earliest <- merge(x = earliest, y = data, by = "early_connect", all.x = TRUE)
+ earliest <- earliest[ , 4:length(earliest)]
+
+
+ ################ LOOP: Add on each subsequent earliest MS to author's row.
+ ####### Create a vector that currently exist in the data ('earliest') you're creating (to disallow repeat info); upload dplyr to union next iteration:
+ list_of_emailbyms <- data.frame(earliest[ , "emailbyms"])
+ library(dplyr)         ####### Need to install if havent.
+
+ repeat{
+   ####### Create a vector and subset by the emailbyms that currently exist in the data you're creating (i.e. 'earliest'); This disallows repeat info:
+   not_in_cur_data <- data[!(data$emailbyms %in% list_of_emailbyms[,1]) , ]
+
+   ####### Should the loop end?:
+   xx <- nrow(not_in_cur_data)
+     if(xx < 1){
+       break
+     }
+
+   ####### Create dataset of author's next earliest manuscript, again, connecting through a concatination of email and date_submit:
+   min_not_in_cur_data <- aggregate(not_in_cur_data$date_submit, by=list(not_in_cur_data$email), min)
+
+   not_in_cur_data$early_connect <- paste0(not_in_cur_data$email, not_in_cur_data$date_submit)
+   min_not_in_cur_data$early_connect <- paste0(min_not_in_cur_data$Group.1, min_not_in_cur_data$x)
+
+   min_not_in_cur_data <- merge(x = min_not_in_cur_data, y = not_in_cur_data, by = "early_connect", all.x = TRUE)
+   min_not_in_cur_data <- min_not_in_cur_data[ , 4:length(min_not_in_cur_data)]
+
+   ####### Merge next earliest ms info onto data you're creating (i.e. 'earlist') through 'email':
+   earliest <- merge(x = earliest, y = min_not_in_cur_data, by = "email", all.x = TRUE)
+
+   ####### Add in the new 'emailbyms' values you just added onto the list that disallows repeat info:
+   list_of_emailbyms <- union_all(list_of_emailbyms, data.frame(min_not_in_cur_data[, "emailbyms"]))
+   colnames(list_of_emailbyms) <- c("a", "b")
+   list_of_emailbyms <- within(list_of_emailbyms, a <- ifelse(is.na(a), as.character(b), as.character(a)))
+   list_of_emailbyms <- list_of_emailbyms[,1]
+   list_of_emailbyms <- data.frame(list_of_emailbyms)
+ }
+ return(earliest)
+}
+
